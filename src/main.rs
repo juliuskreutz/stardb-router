@@ -41,6 +41,8 @@ impl ProxyHttp for StardbRouter {
 
         Ok(if req_header.uri.path().starts_with("/api") {
             Box::new(HttpPeer::new(("0.0.0.0", 8000), false, String::new()))
+        } else if req_header.uri.path().starts_with("/wuwa/map") {
+            Box::new(HttpPeer::new(("0.0.0.0", 8001), false, String::new()))
         } else {
             Box::new(HttpPeer::new(("0.0.0.0", 3000), false, String::new()))
         })
