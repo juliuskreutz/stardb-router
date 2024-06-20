@@ -1,10 +1,39 @@
+use std::sync::Arc;
+
+use http::{header, Response, StatusCode};
 use pingora::{
+    apps::http_app::ServeHttp,
     listeners::TlsSettings,
+    protocols::http::ServerSession,
     server::{configuration::Opt, Server},
+    services::listening::Service,
     upstreams::peer::HttpPeer,
 };
 use pingora_core::Result;
 use pingora_proxy::{ProxyHttp, Session};
+
+struct HttpsRedirect;
+
+#[async_trait::async_trait]
+impl ServeHttp for HttpsRedirect {
+    async fn response(&self, session: &mut ServerSession) -> Response<Vec<u8>> {
+        let path_and_query = session
+            .req_header()
+            .uri
+            .path_and_query()
+            .map(|paq| paq.as_str())
+            .unwrap_or_default();
+
+        Response::builder()
+            .status(StatusCode::MOVED_PERMANENTLY)
+            .header(
+                header::LOCATION,
+                format!("https://stardb.gg{}", path_and_query),
+            )
+            .body(Vec::new())
+            .unwrap()
+    }
+}
 
 struct StardbRouter;
 
@@ -43,6 +72,12 @@ impl ProxyHttp for StardbRouter {
             Box::new(HttpPeer::new(("0.0.0.0", 8000), false, String::new()))
         } else if req_header.uri.path().starts_with("/wuwa/map") {
             Box::new(HttpPeer::new(("0.0.0.0", 8001), false, String::new()))
+        } else if req_header.uri.path().starts_with("/gtm.js") {
+            Box::new(HttpPeer::new(
+                ("www.googletagmanager.com", 443),
+                true,
+                String::new(),
+            ))
         } else {
             Box::new(HttpPeer::new(("0.0.0.0", 3000), false, String::new()))
         })
@@ -56,15 +91,20 @@ fn main() {
     env_logger::init();
 
     let mut tls_settings = TlsSettings::intermediate(
-        "/etc/letsencrypt/live/v2.stardb.gg/fullchain.pem",
-        "/etc/letsencrypt/live/v2.stardb.gg/privkey.pem",
+        "/etc/letsencrypt/live/stardb.gg/fullchain.pem",
+        "/etc/letsencrypt/live/stardb.gg/privkey.pem",
     )
     .unwrap();
     tls_settings.enable_h2();
 
     let mut my_proxy = pingora_proxy::http_proxy_service(&my_server.configuration, StardbRouter);
     my_proxy.add_tls_with_settings("0.0.0.0:443", None, tls_settings);
+
+    let mut my_redirect = Service::new("Https Redirect".to_string(), Arc::new(HttpsRedirect {}));
+    my_redirect.add_tcp("0.0.0.0:80");
+
     my_server.add_service(my_proxy);
+    my_server.add_service(my_redirect);
 
     my_server.run_forever();
 }
