@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use http::{header, Response, StatusCode};
+use http::{header, Response, StatusCode, Uri};
 use pingora::{
     apps::http_app::ServeHttp,
     listeners::TlsSettings,
     protocols::http::ServerSession,
     server::{configuration::Opt, Server},
     services::listening::Service,
-    upstreams::peer::HttpPeer,
+    upstreams::peer::{HttpPeer, Peer, PeerOptions},
 };
 use pingora_core::Result;
 use pingora_proxy::{ProxyHttp, Session};
@@ -17,12 +17,9 @@ struct HttpsRedirect;
 #[async_trait::async_trait]
 impl ServeHttp for HttpsRedirect {
     async fn response(&self, session: &mut ServerSession) -> Response<Vec<u8>> {
-        let path_and_query = session
-            .req_header()
-            .uri
-            .path_and_query()
-            .map(|paq| paq.as_str())
-            .unwrap_or_default();
+        let path_and_query = session.req_header().uri.path_and_query().unwrap();
+
+        log::info!("HttpsRedirect: {}", path_and_query);
 
         Response::builder()
             .status(StatusCode::MOVED_PERMANENTLY)
@@ -50,6 +47,8 @@ impl ProxyHttp for StardbRouter {
     ) -> Result<Box<HttpPeer>> {
         let req_header = session.req_header().clone();
 
+        log::info!("HttpsRedirect: {}", req_header.uri.path());
+
         let cookies = req_header
             .headers
             .get_all("cookie")
@@ -68,18 +67,39 @@ impl ProxyHttp for StardbRouter {
         session.downstream_compression.adjust_level(6);
         session.downstream_compression.request_filter(&req_header);
 
+        let mut peer_options = PeerOptions::new();
+        peer_options.idle_timeout = Some(std::time::Duration::from_secs(1));
+
         Ok(if req_header.uri.path().starts_with("/api") {
-            Box::new(HttpPeer::new(("0.0.0.0", 8000), false, String::new()))
-        } else if req_header.uri.path().starts_with("/wuwa/map") {
-            Box::new(HttpPeer::new(("0.0.0.0", 8001), false, String::new()))
-        } else if req_header.uri.path().starts_with("/gtm.js") {
-            Box::new(HttpPeer::new(
-                ("www.googletagmanager.com", 443),
-                true,
-                String::new(),
-            ))
+            let mut peer = HttpPeer::new(("0.0.0.0", 8000), false, String::new());
+            *peer.get_mut_peer_options().unwrap() = peer_options;
+
+            Box::new(peer)
+        } else if req_header.uri.path().starts_with("/wuwa/map/") {
+            let mut parts = req_header.uri.clone().into_parts();
+            parts.path_and_query = Some(
+                parts
+                    .path_and_query
+                    .unwrap()
+                    .as_str()
+                    .strip_prefix("/wuwa/map")
+                    .unwrap()
+                    .parse()
+                    .unwrap(),
+            );
+            session
+                .req_header_mut()
+                .set_uri(Uri::from_parts(parts).unwrap());
+
+            let mut peer = HttpPeer::new(("0.0.0.0", 8001), false, String::new());
+            *peer.get_mut_peer_options().unwrap() = peer_options;
+
+            Box::new(peer)
         } else {
-            Box::new(HttpPeer::new(("0.0.0.0", 3000), false, String::new()))
+            let mut peer = HttpPeer::new(("0.0.0.0", 3000), false, String::new());
+            *peer.get_mut_peer_options().unwrap() = peer_options;
+
+            Box::new(peer)
         })
     }
 }
