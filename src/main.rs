@@ -1,9 +1,8 @@
-use std::sync::Arc;
-
 use http::{header, Response, StatusCode, Uri};
 use pingora::{
     apps::http_app::ServeHttp,
     listeners::TlsSettings,
+    modules::http::{compression::ResponseCompressionBuilder, HttpModules},
     protocols::http::ServerSession,
     server::{configuration::Opt, Server},
     services::listening::Service,
@@ -47,7 +46,7 @@ impl ProxyHttp for StardbRouter {
     ) -> Result<Box<HttpPeer>> {
         let req_header = session.req_header().clone();
 
-        log::info!("HttpsRedirect: {}", req_header.uri.path());
+        log::info!("Proxy: {}", req_header.uri.path());
 
         let cookies = req_header
             .headers
@@ -63,18 +62,8 @@ impl ProxyHttp for StardbRouter {
             .insert_header("cookie", &cookies)
             .unwrap();
 
-        session.downstream_compression.adjust_decompression(true);
-        session.downstream_compression.adjust_level(6);
-        session.downstream_compression.request_filter(&req_header);
-
-        let mut peer_options = PeerOptions::new();
-        peer_options.idle_timeout = Some(std::time::Duration::from_secs(1));
-
-        Ok(if req_header.uri.path().starts_with("/api") {
-            let mut peer = HttpPeer::new(("0.0.0.0", 8000), false, String::new());
-            *peer.get_mut_peer_options().unwrap() = peer_options;
-
-            Box::new(peer)
+        let (adress, tls, sni) = if req_header.uri.path().starts_with("/api") {
+            (("0.0.0.0", 8000), false, String::new())
         } else if req_header.uri.path().starts_with("/wuwa/map/") {
             let mut parts = req_header.uri.clone().into_parts();
             parts.path_and_query = Some(
@@ -91,16 +80,18 @@ impl ProxyHttp for StardbRouter {
                 .req_header_mut()
                 .set_uri(Uri::from_parts(parts).unwrap());
 
-            let mut peer = HttpPeer::new(("0.0.0.0", 8001), false, String::new());
-            *peer.get_mut_peer_options().unwrap() = peer_options;
-
-            Box::new(peer)
+            (("0.0.0.0", 8001), false, String::new())
         } else {
-            let mut peer = HttpPeer::new(("0.0.0.0", 3000), false, String::new());
-            *peer.get_mut_peer_options().unwrap() = peer_options;
+            (("0.0.0.0", 3000), false, String::new())
+        };
 
-            Box::new(peer)
-        })
+        let mut peer_options = PeerOptions::new();
+        peer_options.idle_timeout = Some(std::time::Duration::from_secs(0));
+
+        let mut peer = HttpPeer::new(adress, tls, sni);
+        *peer.get_mut_peer_options().unwrap() = peer_options;
+
+        Ok(Box::new(peer))
     }
 }
 
@@ -110,17 +101,22 @@ fn main() {
 
     env_logger::init();
 
-    let mut tls_settings = TlsSettings::intermediate(
+    let tls_settings = TlsSettings::intermediate(
         "/etc/letsencrypt/live/stardb.gg/fullchain.pem",
         "/etc/letsencrypt/live/stardb.gg/privkey.pem",
     )
     .unwrap();
-    tls_settings.enable_h2();
 
     let mut my_proxy = pingora_proxy::http_proxy_service(&my_server.configuration, StardbRouter);
     my_proxy.add_tls_with_settings("0.0.0.0:443", None, tls_settings);
+    my_proxy.app_logic_mut().unwrap().downstream_modules = HttpModules::new();
+    my_proxy
+        .app_logic_mut()
+        .unwrap()
+        .downstream_modules
+        .add_module(ResponseCompressionBuilder::enable(6));
 
-    let mut my_redirect = Service::new("Https Redirect".to_string(), Arc::new(HttpsRedirect {}));
+    let mut my_redirect = Service::new("Https Redirect".to_string(), HttpsRedirect);
     my_redirect.add_tcp("0.0.0.0:80");
 
     my_server.add_service(my_proxy);
