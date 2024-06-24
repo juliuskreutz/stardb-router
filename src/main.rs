@@ -1,4 +1,4 @@
-use http::{header, Response, StatusCode, Uri};
+use http::{header, Response, StatusCode};
 use pingora::{
     apps::http_app::ServeHttp,
     listeners::TlsSettings,
@@ -64,29 +64,17 @@ impl ProxyHttp for StardbRouter {
 
         let (adress, tls, sni) = if req_header.uri.path().starts_with("/api") {
             (("0.0.0.0", 8000), false, String::new())
-        } else if req_header.uri.path().starts_with("/wuwa/map/") {
-            let mut parts = req_header.uri.clone().into_parts();
-            parts.path_and_query = Some(
-                parts
-                    .path_and_query
-                    .unwrap()
-                    .as_str()
-                    .strip_prefix("/wuwa/map")
-                    .unwrap()
-                    .parse()
-                    .unwrap(),
-            );
-            session
-                .req_header_mut()
-                .set_uri(Uri::from_parts(parts).unwrap());
-
+        } else if req_header.uri.path().starts_with("/wuwa/map") {
             (("0.0.0.0", 8001), false, String::new())
         } else {
             (("0.0.0.0", 3000), false, String::new())
         };
 
         let mut peer_options = PeerOptions::new();
-        peer_options.idle_timeout = Some(std::time::Duration::from_secs(0));
+        peer_options.total_connection_timeout = Some(std::time::Duration::from_secs(5));
+        peer_options.idle_timeout = Some(std::time::Duration::from_secs(5));
+        peer_options.read_timeout = Some(std::time::Duration::from_secs(5));
+        peer_options.write_timeout = Some(std::time::Duration::from_secs(5));
 
         let mut peer = HttpPeer::new(adress, tls, sni);
         *peer.get_mut_peer_options().unwrap() = peer_options;
