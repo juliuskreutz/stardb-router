@@ -9,7 +9,7 @@ edition = "2021"
 async-trait = "0.1.80"
 env_logger = "0.11.3"
 http = "1.1.0"
-log = "0.4.21"
-pingora = { git = "https://github.com/cloudflare/pingora" }
-pingora-core = { git = "https://github.com/cloudflare/pingora" }
-pingora-proxy = { git = "https://github.com/cloudflare/pingora" }
+log = "0.4.22"
+pingora = "0.2.0"
+pingora-core = "0.2.0"
+pingora-proxy = "0.2.0"

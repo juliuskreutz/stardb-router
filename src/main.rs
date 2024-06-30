@@ -1,12 +1,13 @@
+use std::sync::Arc;
+
 use http::{header, Response, StatusCode};
 use pingora::{
     apps::http_app::ServeHttp,
     listeners::TlsSettings,
-    modules::http::{compression::ResponseCompressionBuilder, HttpModules},
     protocols::http::ServerSession,
     server::{configuration::Opt, Server},
     services::listening::Service,
-    upstreams::peer::{HttpPeer, Peer, PeerOptions},
+    upstreams::peer::{HttpPeer, Peer},
 };
 use pingora_core::Result;
 use pingora_proxy::{ProxyHttp, Session};
@@ -48,6 +49,11 @@ impl ProxyHttp for StardbRouter {
 
         log::info!("Proxy: {}", req_header.uri.path());
 
+        session
+            .req_header_mut()
+            .insert_header("X-Forwarded-Proto", "https")
+            .unwrap();
+
         let cookies = req_header
             .headers
             .get_all("cookie")
@@ -62,22 +68,26 @@ impl ProxyHttp for StardbRouter {
             .insert_header("cookie", &cookies)
             .unwrap();
 
+        session.downstream_compression.adjust_decompression(true);
+        session.downstream_compression.adjust_level(6);
+        session.downstream_compression.request_filter(&req_header);
+
         let (adress, tls, sni) = if req_header.uri.path().starts_with("/api") {
-            (("0.0.0.0", 8000), false, String::new())
+            (("127.0.0.1", 8000), false, String::new())
         } else if req_header.uri.path().starts_with("/wuwa/map") {
-            (("0.0.0.0", 8001), false, String::new())
+            (("127.0.0.1", 8001), false, String::new())
+        } else if req_header.uri.path().starts_with("/ghost")
+            || req_header.uri.path().starts_with("/content")
+            || req_header.uri.path().starts_with("/admin")
+        {
+            (("127.0.0.1", 2368), false, String::new())
         } else {
-            (("0.0.0.0", 3000), false, String::new())
+            (("127.0.0.1", 3000), false, String::new())
         };
 
-        let mut peer_options = PeerOptions::new();
-        peer_options.total_connection_timeout = Some(std::time::Duration::from_secs(5));
-        peer_options.idle_timeout = Some(std::time::Duration::from_secs(5));
-        peer_options.read_timeout = Some(std::time::Duration::from_secs(5));
-        peer_options.write_timeout = Some(std::time::Duration::from_secs(5));
-
         let mut peer = HttpPeer::new(adress, tls, sni);
-        *peer.get_mut_peer_options().unwrap() = peer_options;
+        peer.get_mut_peer_options().unwrap().h2_ping_interval =
+            Some(std::time::Duration::from_secs(1));
 
         Ok(Box::new(peer))
     }
@@ -89,22 +99,17 @@ fn main() {
 
     env_logger::init();
 
-    let tls_settings = TlsSettings::intermediate(
+    let mut tls_settings = TlsSettings::intermediate(
         "/etc/letsencrypt/live/stardb.gg/fullchain.pem",
         "/etc/letsencrypt/live/stardb.gg/privkey.pem",
     )
     .unwrap();
+    tls_settings.enable_h2();
 
     let mut my_proxy = pingora_proxy::http_proxy_service(&my_server.configuration, StardbRouter);
     my_proxy.add_tls_with_settings("0.0.0.0:443", None, tls_settings);
-    my_proxy.app_logic_mut().unwrap().downstream_modules = HttpModules::new();
-    my_proxy
-        .app_logic_mut()
-        .unwrap()
-        .downstream_modules
-        .add_module(ResponseCompressionBuilder::enable(6));
 
-    let mut my_redirect = Service::new("Https Redirect".to_string(), HttpsRedirect);
+    let mut my_redirect = Service::new("Https Redirect".to_string(), Arc::new(HttpsRedirect));
     my_redirect.add_tcp("0.0.0.0:80");
 
     my_server.add_service(my_proxy);
