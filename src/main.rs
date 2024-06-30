@@ -76,10 +76,7 @@ impl ProxyHttp for StardbRouter {
             (("127.0.0.1", 8000), false, String::new())
         } else if req_header.uri.path().starts_with("/wuwa/map") {
             (("127.0.0.1", 8001), false, String::new())
-        } else if req_header.uri.path().starts_with("/ghost")
-            || req_header.uri.path().starts_with("/content")
-            || req_header.uri.path().starts_with("/admin")
-        {
+        } else if req_header.uri.path().starts_with("/cms") {
             (("127.0.0.1", 2368), false, String::new())
         } else {
             (("127.0.0.1", 3000), false, String::new())
