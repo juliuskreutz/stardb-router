@@ -24,9 +24,6 @@
             buildInputs = [
               rust-analyzer
               taplo
-              postgresql
-              sqlx-cli
-              pgformatter
               pkg-config
               openssl
               cargo-cross

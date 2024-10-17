@@ -1,36 +1,11 @@
-use std::sync::Arc;
-
-use http::{header, Response, StatusCode};
 use pingora::{
-    apps::http_app::ServeHttp,
     listeners::TlsSettings,
-    protocols::http::ServerSession,
+    modules::http::{compression::ResponseCompressionBuilder, HttpModules},
     server::{configuration::Opt, Server},
-    services::listening::Service,
-    upstreams::peer::{HttpPeer, Peer},
+    upstreams::peer::HttpPeer,
 };
 use pingora_core::Result;
 use pingora_proxy::{ProxyHttp, Session};
-
-struct HttpsRedirect;
-
-#[async_trait::async_trait]
-impl ServeHttp for HttpsRedirect {
-    async fn response(&self, session: &mut ServerSession) -> Response<Vec<u8>> {
-        let path_and_query = session.req_header().uri.path_and_query().unwrap();
-
-        log::info!("HttpsRedirect: {}", path_and_query);
-
-        Response::builder()
-            .status(StatusCode::MOVED_PERMANENTLY)
-            .header(
-                header::LOCATION,
-                format!("https://stardb.gg{}", path_and_query),
-            )
-            .body(Vec::new())
-            .unwrap()
-    }
-}
 
 struct StardbRouter;
 
@@ -49,11 +24,6 @@ impl ProxyHttp for StardbRouter {
 
         log::info!("Proxy: {}", req_header.uri.path());
 
-        session
-            .req_header_mut()
-            .insert_header("X-Forwarded-Proto", "https")
-            .unwrap();
-
         let cookies = req_header
             .headers
             .get_all("cookie")
@@ -68,23 +38,19 @@ impl ProxyHttp for StardbRouter {
             .insert_header("cookie", &cookies)
             .unwrap();
 
-        session.downstream_compression.adjust_decompression(true);
-        session.downstream_compression.adjust_level(6);
-        session.downstream_compression.request_filter(&req_header);
-
         let (adress, tls, sni) = if req_header.uri.path().starts_with("/api") {
             (("127.0.0.1", 8000), false, String::new())
         } else if req_header.uri.path().starts_with("/wuwa/map") {
             (("127.0.0.1", 8001), false, String::new())
         } else if req_header.uri.path().starts_with("/cms") {
             (("127.0.0.1", 2368), false, String::new())
+        } else if req_header.uri.path().starts_with("/challenge") {
+            (("127.0.0.1", 3001), false, String::new())
         } else {
             (("127.0.0.1", 3000), false, String::new())
         };
 
-        let mut peer = HttpPeer::new(adress, tls, sni);
-        peer.get_mut_peer_options().unwrap().h2_ping_interval =
-            Some(std::time::Duration::from_secs(1));
+        let peer = HttpPeer::new(adress, tls, sni);
 
         Ok(Box::new(peer))
     }
@@ -105,12 +71,11 @@ fn main() {
 
     let mut my_proxy = pingora_proxy::http_proxy_service(&my_server.configuration, StardbRouter);
     my_proxy.add_tls_with_settings("0.0.0.0:443", None, tls_settings);
-
-    let mut my_redirect = Service::new("Https Redirect".to_string(), Arc::new(HttpsRedirect));
-    my_redirect.add_tcp("0.0.0.0:80");
+    let mut downstream_modules = HttpModules::new();
+    downstream_modules.add_module(ResponseCompressionBuilder::enable(6));
+    my_proxy.app_logic_mut().unwrap().downstream_modules = downstream_modules;
 
     my_server.add_service(my_proxy);
-    my_server.add_service(my_redirect);
 
     my_server.run_forever();
 }
