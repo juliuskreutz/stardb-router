@@ -24,6 +24,7 @@ impl ProxyHttp for StardbRouter {
 
         log::info!("Proxy: {}", req_header.uri.path());
 
+        // Svelte doesn't like cookies being in separate headers
         let cookies = req_header
             .headers
             .get_all("cookie")
@@ -38,19 +39,20 @@ impl ProxyHttp for StardbRouter {
             .insert_header("cookie", &cookies)
             .unwrap();
 
-        let (adress, tls, sni) = if req_header.uri.path().starts_with("/api") {
-            (("127.0.0.1", 8000), false, String::new())
-        } else if req_header.uri.path().starts_with("/wuwa/map") {
-            (("127.0.0.1", 8001), false, String::new())
-        } else if req_header.uri.path().starts_with("/cms") {
-            (("127.0.0.1", 2368), false, String::new())
-        } else if req_header.uri.path().starts_with("/challenge") {
-            (("127.0.0.1", 3001), false, String::new())
+        let path = req_header.uri.path();
+
+        let port = if path.starts_with("/api") {
+            // api port
+            8000
+        } else if path.starts_with("/cms") {
+            // ghost port
+            2368
         } else {
-            (("127.0.0.1", 3000), false, String::new())
+            // stardb port
+            3000
         };
 
-        let peer = HttpPeer::new(adress, tls, sni);
+        let peer = HttpPeer::new(("127.0.0.1", port), false, String::new());
 
         Ok(Box::new(peer))
     }
