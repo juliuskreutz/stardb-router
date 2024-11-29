@@ -10,6 +10,6 @@ async-trait = "0.1.83"
 env_logger = "0.11.5"
 http = "1.1.0"
 log = "0.4.22"
-pingora = "0.3.0"
-pingora-core = "0.3.0"
-pingora-proxy = "0.3.0"
+pingora = { version = "0.4.0", features = ["openssl"] }
+pingora-core = { version = "0.4.0", features = ["openssl"] }
+pingora-proxy = { version = "0.4.0", features = ["openssl"] }

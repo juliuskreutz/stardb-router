@@ -1,5 +1,5 @@
 use pingora::{
-    listeners::TlsSettings,
+    listeners::tls::TlsSettings,
     modules::http::{compression::ResponseCompressionBuilder, HttpModules},
     server::{configuration::Opt, Server},
     upstreams::peer::HttpPeer,
@@ -59,7 +59,7 @@ impl ProxyHttp for StardbRouter {
 }
 
 fn main() {
-    let mut my_server = Server::new(Some(Opt::default())).unwrap();
+    let mut my_server = Server::new(Some(Opt::parse_args())).unwrap();
     my_server.bootstrap();
 
     env_logger::init();
